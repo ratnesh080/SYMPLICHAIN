@@ -1,41 +1,41 @@
-name: Production Deployment
+name: Deploy to Production
 
 on:
   push:
     branches:
-      - main  # Only triggers when merging to main
+      - main
 
 jobs:
-  deploy:
-    name: Deploy to Production EC2
+  deploy-prod:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy via SSH
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Sync Static Assets to S3
+        run: |
+          pip install -r requirements.txt
+          python manage.py collectstatic --noinput
+          aws s3 sync static/ s3://${{ secrets.S3_BUCKET_NAME }}/static --delete
+
+      - name: Deploy to Production EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_EC2_IP }}
           username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # 1. Navigate to app directory
-            cd /var/www/symflow
-            
-            # 2. Update code
+            cd /home/ubuntu/symflow-production
             git pull origin main
-            
-            # 3. Update environment
             source venv/bin/activate
             pip install -r requirements.txt
             python manage.py migrate --noinput
-            python manage.py collectstatic --noinput
-            
-            # 4. Restart Services (Order matters: DB migrations first, then workers)
             sudo systemctl restart gunicorn
             sudo systemctl restart celery
-            
-            # 5. Clear Redis Cache (optional but recommended for clean state)
-            redis-cli flushall
